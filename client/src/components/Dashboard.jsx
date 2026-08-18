@@ -12,10 +12,13 @@ import {
   AlertTriangle,
   Loader2,
   Plus,
+  ListChecks,
 } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useToast } from './Toast.jsx';
 import Modal from './Modal.jsx';
+import EditableTimestamp from './EditableTimestamp.jsx';
+import CheckpointList from './CheckpointList.jsx';
 import { formatClock, STATUS_META, INCIDENT_TYPES } from '../lib/format.js';
 
 const SLOT_META = {
@@ -38,6 +41,7 @@ function elapsedSince(startIso) {
   return `${h}h ${String(m).padStart(2, '0')}m`;
 }
 
+// Editable, reorderable checkpoint checklist with per-item check-in timestamps.
 export default function Dashboard({ settings }) {
   const toast = useToast();
   const [shift, setShift] = useState(null);
@@ -58,12 +62,6 @@ export default function Dashboard({ settings }) {
       const [res, siteList] = await Promise.all([api.get('/api/shifts/active'), api.sites.list()]);
       setSites(siteList);
       setShift(res.shift);
-      if (res.shift?.started_at) {
-        if (pollRef.current) clearInterval(pollRef.current);
-        const iv = setInterval(() => setElapsed(elapsedSince(res.shift.started_at)), 1000);
-        pollRef.current = iv;
-        setElapsed(elapsedSince(res.shift.started_at));
-      }
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -73,8 +71,24 @@ export default function Dashboard({ settings }) {
 
   useEffect(() => {
     load();
-    return () => pollRef.current && clearInterval(pollRef.current);
   }, [load]);
+
+  // Live elapsed clock, restarts whenever the shift's start time is edited.
+  useEffect(() => {
+    if (!shift?.started_at) return;
+    const update = () => setElapsed(elapsedSince(shift.started_at));
+    update();
+    const iv = setInterval(update, 1000);
+    pollRef.current = iv;
+    return () => clearInterval(iv);
+  }, [shift?.started_at]);
+
+  useEffect(() => () => pollRef.current && clearInterval(pollRef.current), []);
+
+  function applyShift(next) {
+    setShift(next);
+    setDrafts({});
+  }
 
   async function startShift() {
     if (!selectedSiteId) return toast('Select a site to start your shift', 'error');
@@ -90,14 +104,15 @@ export default function Dashboard({ settings }) {
     }
   }
 
+  function replacePatrol(slot, nextPatrol) {
+    setShift((s) => ({ ...s, patrols: s.patrols.map((x) => (x.slot === slot ? nextPatrol : x)) }));
+  }
+
   async function startPatrol(slot) {
     setBusyId(`start-${slot}`);
     try {
       const p = await api.post(`/api/shifts/${shift.id}/patrols/${slot}/start`);
-      setShift((s) => ({
-        ...s,
-        patrols: s.patrols.map((x) => (x.slot === slot ? p : x)),
-      }));
+      replacePatrol(slot, p);
       setDrafts((d) => ({
         ...d,
         [slot]: { status: 'all_clear', checklist: p.checklist, notes: '' },
@@ -126,9 +141,6 @@ export default function Dashboard({ settings }) {
       }));
       setDrafts((d) => ({ ...d, [slot]: undefined }));
       toast('Patrol completed', 'success');
-      if (res.shift) {
-        if (pollRef.current) clearInterval(pollRef.current);
-      }
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -136,24 +148,37 @@ export default function Dashboard({ settings }) {
     }
   }
 
-  function toggleCheck(slot, name) {
-    setDrafts((d) => ({
-      ...d,
-      [slot]: {
-        ...d[slot],
-        checklist: d[slot].checklist.map((c) => (c.name === name ? { ...c, ok: !c.ok } : c)),
-      },
-    }));
+  // Live checkpoint persistence (add / edit / reorder / delete / check-in time).
+  function updateChecklist(slot, next) {
+    setDrafts((d) => ({ ...d, [slot]: { ...d[slot], checklist: next } }));
+    api.saveChecklist(shift.id, slot, next).catch((e) => toast(e.message, 'error'));
+  }
+
+  async function savePatrolTimes(slot, data) {
+    try {
+      const p = await api.updatePatrol(shift.id, slot, data);
+      replacePatrol(slot, p);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
+  }
+
+  async function saveShiftTimes(data) {
+    try {
+      const next = await api.updateShift(shift.id, data);
+      setShift(next);
+    } catch (e) {
+      toast(e.message, 'error');
+    }
   }
 
   async function endShift() {
     setBusyId('end');
     try {
       const s = await api.post(`/api/shifts/${shift.id}/end`, { notes: endNotes });
-      setShift(s);
+      applyShift(s);
       setEndModal(false);
       setEndNotes('');
-      if (pollRef.current) clearInterval(pollRef.current);
       toast('Shift ended', 'success');
     } catch (e) {
       toast(e.message, 'error');
@@ -209,7 +234,9 @@ export default function Dashboard({ settings }) {
           busy={busyId === 'start-shift'}
           settings={settings}
         />
-        {shift && shift.status === 'completed' && <CompletedShiftSummary shift={shift} />}
+        {shift && shift.status === 'completed' && (
+          <CompletedShiftSummary shift={shift} onUpdate={(s) => setShift(s)} />
+        )}
       </div>
     );
   }
@@ -234,7 +261,11 @@ export default function Dashboard({ settings }) {
                 <MapPin size={14} /> {shift.site_name}
               </span>
               <span className="inline-flex items-center gap-1">
-                <Clock size={14} /> started {formatClock(shift.started_at)}
+                <Clock size={14} /> started{' '}
+                <EditableTimestamp
+                  value={shift.started_at}
+                  onSave={(iso) => saveShiftTimes({ started_at: iso })}
+                />
               </span>
             </div>
           </div>
@@ -253,6 +284,31 @@ export default function Dashboard({ settings }) {
           />
         </div>
       </div>
+
+      {/* Shift narrative log (auto-logged start/end requirements + entries) */}
+      {shift.logs?.length > 0 && (
+        <div className="card">
+          <div className="mb-2 flex items-center gap-2">
+            <ListChecks size={18} className="text-accent-600 dark:text-accent-400" />
+            <h3 className="font-bold">Shift Log</h3>
+          </div>
+          <div className="space-y-1.5">
+            {shift.logs.map((l) => (
+              <div key={l.id} className="flex items-start gap-2 text-sm">
+                <span
+                  className={`mt-0.5 shrink-0 rounded-md px-1.5 py-0.5 text-[10px] font-bold uppercase ${
+                    l.phase === 'start' ? 'bg-emerald-100 text-emerald-700 dark:bg-emerald-500/15 dark:text-emerald-400' : l.phase === 'end' ? 'bg-sky-100 text-sky-700 dark:bg-sky-500/15 dark:text-sky-400' : 'bg-slate-100 text-slate-600 dark:bg-slate-500/15 dark:text-slate-300'
+                  }`}
+                >
+                  {l.phase}
+                </span>
+                <span className="min-w-0 flex-1" style={{ color: 'rgb(var(--ink-2))' }}>{l.text}</span>
+                <span className="shrink-0 font-mono text-xs" style={{ color: 'rgb(var(--faint))' }}>{formatClock(l.logged_at)}</span>
+              </div>
+            ))}
+          </div>
+        </div>
+      )}
 
       {/* Patrol slots */}
       <div className="grid gap-4 md:grid-cols-2 xl:grid-cols-3">
@@ -273,9 +329,26 @@ export default function Dashboard({ settings }) {
                   </div>
                   <div className="min-w-0">
                     <p className="truncate font-bold">{patrol.label}</p>
-                    {inProgress && <p className="text-xs text-accent-600 dark:text-accent-400">In progress · {formatClock(patrol.started_at)}</p>}
+                    {inProgress && (
+                      <p className="flex items-center gap-1 text-xs text-accent-600 dark:text-accent-400">
+                        In progress · started{' '}
+                        <EditableTimestamp
+                          value={patrol.started_at}
+                          onSave={(iso) => savePatrolTimes(patrol.slot, { started_at: iso })}
+                        />
+                      </p>
+                    )}
                     {done && statusMeta && (
-                      <span className={`chip mt-0.5 ${STATUS_CLASSES[patrol.status]}`}>{statusMeta.label}</span>
+                      <>
+                        <span className={`chip mt-0.5 ${STATUS_CLASSES[patrol.status]}`}>{statusMeta.label}</span>
+                        <p className="mt-0.5 flex items-center gap-1 text-xs" style={{ color: 'rgb(var(--faint))' }}>
+                          completed{' '}
+                          <EditableTimestamp
+                            value={patrol.completed_at}
+                            onSave={(iso) => savePatrolTimes(patrol.slot, { completed_at: iso })}
+                          />
+                        </p>
+                      </>
                     )}
                     {!patrol.started_at && <p className="text-xs" style={{ color: 'rgb(var(--faint))' }}>Not started</p>}
                   </div>
@@ -317,23 +390,10 @@ export default function Dashboard({ settings }) {
                   </div>
 
                   <p className="label mt-4">Checkpoints</p>
-                  <div className="grid grid-cols-2 gap-2">
-                    {(draft?.checklist || []).map((c) => (
-                      <button
-                        key={c.name}
-                        type="button"
-                        onClick={() => toggleCheck(patrol.slot, c.name)}
-                        className={`rounded-xl border px-2.5 py-2 text-xs font-medium transition ${
-                          c.ok
-                            ? 'border-emerald-200 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/15 dark:text-emerald-400'
-                            : 'border-rose-200 bg-rose-50 text-rose-700 dark:border-rose-500/30 dark:bg-rose-500/15 dark:text-rose-400'
-                        }`}
-                      >
-                        <span className="block truncate">{c.name}</span>
-                        <CheckCircle2 size={14} className={`mt-1 ${c.ok ? 'text-emerald-500' : 'text-rose-500'}`} />
-                      </button>
-                    ))}
-                  </div>
+                  <CheckpointList
+                    items={draft?.checklist || []}
+                    onChange={(next) => updateChecklist(patrol.slot, next)}
+                  />
 
                   <p className="label mt-4">Notes</p>
                   <textarea
@@ -491,7 +551,7 @@ function StartShiftCard({ sites, selectedSiteId, setSelectedSiteId, onStart, bus
         <ul className="mt-2 space-y-1.5">
           <li>• Pick the site you are working today</li>
           <li>• Patrols are created automatically from the site's patrol plan</li>
-          <li>• Complete each patrol with a status + checkpoint checklist</li>
+          <li>• Build each patrol's checkpoint list as you go — add, edit, reorder, delete</li>
           <li>• Log incidents with photos and voice memos</li>
           <li>• Generate AI reports at the end of your shift</li>
         </ul>
@@ -500,22 +560,32 @@ function StartShiftCard({ sites, selectedSiteId, setSelectedSiteId, onStart, bus
   );
 }
 
-function CompletedShiftSummary({ shift }) {
+function CompletedShiftSummary({ shift, onUpdate }) {
   const completed = shift.patrols.filter((p) => p.completed_at).length;
   const total = shift.patrols.length;
   return (
     <div className="card">
-      <div className="flex items-center gap-3">
+      <div className="flex items-start gap-3">
         <div className="rounded-xl border border-emerald-200 bg-emerald-50 p-2.5 text-emerald-600 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-400">
           <ShieldCheck size={20} />
         </div>
         <div className="min-w-0">
-          <p className="font-bold">
-            Shift completed · {shift.site_name}
-          </p>
-          <p className="text-xs" style={{ color: 'rgb(var(--muted))' }}>
-            {shift.officer_name} · started {formatClock(shift.started_at)}
-            {shift.ended_at ? ` · ended ${formatClock(shift.ended_at)}` : ''}
+          <p className="font-bold">Shift completed · {shift.site_name}</p>
+          <p className="mt-0.5 text-xs" style={{ color: 'rgb(var(--muted))' }}>
+            {shift.officer_name} · started{' '}
+            <EditableTimestamp
+              value={shift.started_at}
+              onSave={async (iso) => onUpdate(await api.updateShift(shift.id, { started_at: iso }))}
+            />
+            {shift.ended_at ? (
+              <>
+                {' '}· ended{' '}
+                <EditableTimestamp
+                  value={shift.ended_at}
+                  onSave={async (iso) => onUpdate(await api.updateShift(shift.id, { ended_at: iso }))}
+                />
+              </>
+            ) : null}
           </p>
           <p className="text-xs" style={{ color: 'rgb(var(--muted))' }}>
             {completed}/{total} patrols completed

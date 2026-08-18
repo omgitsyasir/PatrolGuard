@@ -28,7 +28,7 @@ export function formatDate(iso) {
 
 export function formatDuration(start, end) {
   if (!start || !end) return '—';
-  const mins = Math.max(0, Math.round((new Date(end) - new Date(start)) / 60000));
+  const mins = Math.max(0, Math.round(Math.abs(new Date(end) - new Date(start)) / 60000));
   if (mins < 60) return `${mins} min`;
   const h = Math.floor(mins / 60);
   return `${h}h ${mins % 60}m`;
@@ -47,6 +47,12 @@ export function toLocalInputValue(iso) {
   if (isNaN(d)) return '';
   const pad = (n) => String(n).padStart(2, '0');
   return `${d.getFullYear()}-${pad(d.getMonth() + 1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}`;
+}
+
+export function localInputToIso(value) {
+  if (!value) return null;
+  const d = new Date(value);
+  return isNaN(d) ? null : d.toISOString();
 }
 
 export function nowLocalInputValue() {
@@ -75,8 +81,6 @@ export const INCIDENT_TYPES = [
   'Parking Issue',
   'Other',
 ];
-
-export const CHECKPOINTS = ['Fire Exits', 'Pool Area', 'Parking Lot', 'Hallway Noise'];
 
 export function defaultPatrolNames(n) {
   const names = [];

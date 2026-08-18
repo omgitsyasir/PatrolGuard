@@ -26,7 +26,7 @@ function fmtInstant(iso) {
 
 function fmtDuration(start, end) {
   if (!start || !end) return '—';
-  const mins = Math.max(0, Math.round((new Date(end) - new Date(start)) / 60000));
+  const mins = Math.max(0, Math.round(Math.abs(new Date(end) - new Date(start)) / 60000));
   return `${mins} min`;
 }
 
@@ -36,6 +36,9 @@ function buildDarContext(shift) {
     .prepare('SELECT * FROM incidents WHERE shift_id = ? ORDER BY occurred_at')
     .all(shift.id)
     .map((i) => ({ ...i, media: JSON.parse(i.media || '[]') }));
+  const logs = db
+    .prepare('SELECT * FROM shift_logs WHERE shift_id = ? ORDER BY logged_at, id')
+    .all(shift.id);
 
   const site = shift.site_id ? db.prepare('SELECT * FROM sites WHERE id = ?').get(shift.site_id) : null;
   const settings = getSettings();
@@ -48,6 +51,15 @@ function buildDarContext(shift) {
   lines.push(`Site / Location: ${shift.site_name || site?.site_name || '—'}`);
   lines.push(`Shift started: ${fmtInstant(shift.started_at)}`);
   lines.push(`Shift ended: ${fmtInstant(shift.ended_at)}`);
+  lines.push('');
+  lines.push('SHIFT LOG / NARRATIVE:');
+  if (logs.length === 0) {
+    lines.push('(no narrative log entries)');
+  } else {
+    for (const l of logs) {
+      lines.push(`- [${l.phase.toUpperCase()}] ${fmtInstant(l.logged_at)}: ${l.text}`);
+    }
+  }
   lines.push('');
   lines.push('PATROLS:');
   for (const p of patrols) {
@@ -62,6 +74,21 @@ function buildDarContext(shift) {
     lines.push(`- #${inc.id} ${inc.incident_type} at ${inc.location} on ${fmtInstant(inc.occurred_at)}${inc.details ? `: "${inc.details}"` : ''}`);
   }
   return lines.join('\n');
+}
+
+function buildDarPrompt(shift) {
+  const context = buildDarContext(shift);
+  const system = `You are PatrolGuard, a professional hotel security operations assistant.
+Write a concise, professional Daily Activity Report (DAR) for a hotel security officer.
+Structure:
+HEADER: date, officer name, company, hotel/site location.
+SHIFT SUMMARY: start/end times and duration.
+SHIFT LOG: include the start/end standard narrative entries (what the officer did at the start and end of shift).
+PATROL ACTIVITY: for each patrol, summarize status, checkpoints checked, and anything needing attention.
+INCIDENTS: list each incident with type, location, time, and brief detail.
+CLOSING: overall assessment and any recommendations.
+Use ONLY the facts provided. Do not invent events. Keep it under 350 words. Use plain text with simple labels (no markdown headings, no bullet asterisks).`;
+  return { system, user: `Generate a Daily Activity Report for the following shift data:\n\n${context}`, context };
 }
 
 function buildIncidentContext(incident) {
@@ -86,6 +113,15 @@ function buildIncidentContext(incident) {
   return lines.join('\n');
 }
 
+router.post('/dar/preview', (req, res) => {
+  const shift = req.body?.shift_id
+    ? db.prepare('SELECT * FROM shifts WHERE id = ?').get(req.body.shift_id)
+    : db.prepare('SELECT * FROM shifts ORDER BY started_at DESC LIMIT 1').get();
+  if (!shift) return res.status(404).json({ error: 'No shift found. Start a shift first.' });
+  const { system, user, context } = buildDarPrompt(shift);
+  res.json({ system, user, context, shift_id: shift.id });
+});
+
 router.post('/dar', async (req, res) => {
   try {
     const profile = resolveProfile(req.body?.llm_profile_id);
@@ -95,25 +131,17 @@ router.post('/dar', async (req, res) => {
       : db.prepare('SELECT * FROM shifts ORDER BY started_at DESC LIMIT 1').get();
     if (!shift) return res.status(404).json({ error: 'No shift found. Start a shift first.' });
 
-    const context = buildDarContext(shift);
-
-    const system = `You are PatrolGuard, a professional hotel security operations assistant.
-Write a concise, professional Daily Activity Report (DAR) for a hotel security officer.
-Structure:
-HEADER: date, officer name, company, hotel/site location.
-SHIFT SUMMARY: start/end times and duration.
-PATROL ACTIVITY: for each patrol, summarize status, checkpoints checked, and anything needing attention.
-INCIDENTS: list each incident with type, location, time, and brief detail.
-CLOSING: overall assessment and any recommendations.
-Use ONLY the facts provided. Do not invent events. Keep it under 350 words. Use plain text with simple labels (no markdown headings, no bullet asterisks).`;
+    const { system, user } = buildDarPrompt(shift);
+    const finalSystem = (req.body?.system && String(req.body.system).trim()) || system;
+    const finalUser = (req.body?.user && String(req.body.user).trim()) || user;
 
     const content = await chatCompletion({
       endpoint: profile.endpoint,
       apiKey: profile.api_key,
       model: profile.model_name,
       temperature: profile.temperature,
-      system,
-      user: `Generate a Daily Activity Report for the following shift data:\n\n${context}`,
+      system: finalSystem,
+      user: finalUser,
     });
 
     const info = db
@@ -127,17 +155,9 @@ Use ONLY the facts provided. Do not invent events. Keep it under 350 words. Use 
   }
 });
 
-router.post('/incident', async (req, res) => {
-  try {
-    const profile = resolveProfile(req.body?.llm_profile_id);
-
-    const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.body?.incident_id);
-    if (!incident) return res.status(404).json({ error: 'Incident not found' });
-    incident.media = JSON.parse(incident.media || '[]');
-
-    const context = buildIncidentContext(incident);
-
-    const system = `You are PatrolGuard, a professional security report writer.
+function buildIncidentPrompt(incident) {
+  const context = buildIncidentContext(incident);
+  const system = `You are PatrolGuard, a professional security report writer.
 Write a formal incident report structured by the 5 Ws:
 WHO: people involved, guests, staff, or witnesses (use only provided info).
 WHAT: a clear factual account of what happened.
@@ -146,14 +166,36 @@ WHEN: date and time.
 WHY/HOW: likely cause and how it unfolded.
 ACTION TAKEN: the officer's response (note if not provided).
 For any unknown element write "Not provided". Use ONLY the facts provided. Do not invent people, statements, or actions. Plain text with simple labels (no markdown headings, no bullet asterisks).`;
+  return { system, user: `Write a formal 5W incident report for the following data:\n\n${context}`, context };
+}
+
+router.post('/incident/preview', (req, res) => {
+  const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.body?.incident_id);
+  if (!incident) return res.status(404).json({ error: 'Incident not found' });
+  incident.media = JSON.parse(incident.media || '[]');
+  const { system, user, context } = buildIncidentPrompt(incident);
+  res.json({ system, user, context, incident_id: incident.id });
+});
+
+router.post('/incident', async (req, res) => {
+  try {
+    const profile = resolveProfile(req.body?.llm_profile_id);
+
+    const incident = db.prepare('SELECT * FROM incidents WHERE id = ?').get(req.body?.incident_id);
+    if (!incident) return res.status(404).json({ error: 'Incident not found' });
+    incident.media = JSON.parse(incident.media || '[]');
+
+    const { system, user } = buildIncidentPrompt(incident);
+    const finalSystem = (req.body?.system && String(req.body.system).trim()) || system;
+    const finalUser = (req.body?.user && String(req.body.user).trim()) || user;
 
     const content = await chatCompletion({
       endpoint: profile.endpoint,
       apiKey: profile.api_key,
       model: profile.model_name,
       temperature: profile.temperature,
-      system,
-      user: `Write a formal 5W incident report for the following data:\n\n${context}`,
+      system: finalSystem,
+      user: finalUser,
     });
 
     const info = db

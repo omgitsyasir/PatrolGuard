@@ -1,11 +1,62 @@
 import { useCallback, useEffect, useState } from 'react';
-import { Building2, MapPin, Plus, Pencil, Trash2, Loader2 } from 'lucide-react';
+import { Building2, MapPin, Plus, Pencil, Trash2, Loader2, ArrowUp, ArrowDown } from 'lucide-react';
 import { api } from '../../lib/api.js';
 import { useToast } from '../Toast.jsx';
 import Modal from '../Modal.jsx';
 import { defaultPatrolNames } from '../../lib/format.js';
 
-const emptyForm = () => ({ company_name: '', site_name: '', patrol_count: 3, patrol_names: defaultPatrolNames(3) });
+const emptyForm = () => ({
+  company_name: '',
+  site_name: '',
+  patrol_count: 3,
+  patrol_names: defaultPatrolNames(3),
+  checkpoints: [],
+  shift_start_requirements: [],
+  shift_end_requirements: [],
+});
+
+// Reorderable list of text items (used for checkpoint templates and shift requirements).
+function StringListEditor({ label, hint, items, onChange }) {
+  const [draft, setDraft] = useState('');
+
+  function add() {
+    const v = draft.trim();
+    if (!v) return;
+    onChange([...items, v]);
+    setDraft('');
+  }
+
+  return (
+    <div className="rounded-xl border p-3" style={{ borderColor: 'rgb(var(--line))' }}>
+      <p className="text-sm font-semibold">{label}</p>
+      {hint && <p className="mb-2 text-xs" style={{ color: 'rgb(var(--faint))' }}>{hint}</p>}
+      <div className="space-y-1.5">
+        {items.map((item, i) => (
+          <div key={i} className="flex items-center gap-1.5">
+            <span className="min-w-0 flex-1 rounded-lg border px-2.5 py-1.5 text-sm" style={{ borderColor: 'rgb(var(--line))', backgroundColor: 'rgb(var(--surface-2))' }}>
+              {item}
+            </span>
+            <button type="button" onClick={() => onChange(items.filter((_, j) => j !== i))} className="rounded-lg p-1.5 text-rose-500 hover:bg-rose-50 dark:hover:bg-rose-500/10" title="Remove">
+              <Trash2 size={14} />
+            </button>
+            <button type="button" disabled={i === 0} onClick={() => { const n = [...items]; [n[i], n[i - 1]] = [n[i - 1], n[i]]; onChange(n); }} className="rounded-lg p-1.5 hover:opacity-70 disabled:opacity-30" style={{ color: 'rgb(var(--muted))' }} title="Move up">
+              <ArrowUp size={14} />
+            </button>
+            <button type="button" disabled={i === items.length - 1} onClick={() => { const n = [...items]; [n[i], n[i + 1]] = [n[i + 1], n[i]]; onChange(n); }} className="rounded-lg p-1.5 hover:opacity-70 disabled:opacity-30" style={{ color: 'rgb(var(--muted))' }} title="Move down">
+              <ArrowDown size={14} />
+            </button>
+          </div>
+        ))}
+      </div>
+      <div className="mt-2 flex items-center gap-2">
+        <input value={draft} onChange={(e) => setDraft(e.target.value)} onKeyDown={(e) => e.key === 'Enter' && add()} className="input !min-w-0 flex-1 !px-2 !py-1.5 text-sm" placeholder={items.length === 0 ? 'Add first item…' : 'Add item…'} />
+        <button type="button" onClick={add} className="btn-primary shrink-0 px-3 py-1.5 text-sm">
+          <Plus size={14} /> Add
+        </button>
+      </div>
+    </div>
+  );
+}
 
 export default function SitesManager() {
   const toast = useToast();
@@ -43,6 +94,9 @@ export default function SitesManager() {
       site_name: site.site_name,
       patrol_count: site.patrol_count,
       patrol_names: [...site.patrol_names],
+      checkpoints: [...(site.checkpoints || [])],
+      shift_start_requirements: [...(site.shift_start_requirements || [])],
+      shift_end_requirements: [...(site.shift_end_requirements || [])],
     });
     setOpen(true);
   }
@@ -138,6 +192,8 @@ export default function SitesManager() {
             </div>
             <p className="mt-2 text-xs" style={{ color: 'rgb(var(--muted))' }}>
               {s.patrol_count} patrols per shift
+              {s.checkpoints?.length ? ` · ${s.checkpoints.length} checkpoints` : ''}
+              {s.shift_start_requirements?.length || s.shift_end_requirements?.length ? ' · work order' : ''}
             </p>
             <div className="mt-2 flex flex-wrap gap-1">
               {s.patrol_names.map((n, i) => (
@@ -189,6 +245,28 @@ export default function SitesManager() {
                 </div>
               ))}
             </div>
+          </div>
+
+          <StringListEditor
+            label="Default Checkpoints"
+            hint="The checkpoints each patrol starts with. Officers can add / edit / reorder / delete these during a shift."
+            items={form.checkpoints}
+            onChange={(checkpoints) => setForm((f) => ({ ...f, checkpoints }))}
+          />
+
+          <div className="grid grid-cols-1 gap-3 sm:grid-cols-2">
+            <StringListEditor
+              label="Shift Start Requirements"
+              hint="Narrative log lines auto-added to the daily record when a shift starts (e.g. 'Clocked in, received work phone from front desk, scanned attendance NFC tag')."
+              items={form.shift_start_requirements}
+              onChange={(shift_start_requirements) => setForm((f) => ({ ...f, shift_start_requirements }))}
+            />
+            <StringListEditor
+              label="Shift End Requirements"
+              hint="Narrative log lines auto-added to the daily record when a shift ends (e.g. 'Returned work phone, closed work account, scanned out')."
+              items={form.shift_end_requirements}
+              onChange={(shift_end_requirements) => setForm((f) => ({ ...f, shift_end_requirements }))}
+            />
           </div>
 
           <div className="flex gap-2">

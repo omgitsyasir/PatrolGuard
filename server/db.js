@@ -37,6 +37,9 @@ CREATE TABLE IF NOT EXISTS sites (
   site_name TEXT NOT NULL,
   patrol_count INTEGER NOT NULL DEFAULT 3,
   patrol_names_json TEXT NOT NULL DEFAULT '[]',
+  checkpoints_json TEXT NOT NULL DEFAULT '[]',
+  shift_start_requirements_json TEXT NOT NULL DEFAULT '[]',
+  shift_end_requirements_json TEXT NOT NULL DEFAULT '[]',
   created_at TEXT NOT NULL
 );
 
@@ -98,6 +101,15 @@ CREATE TABLE IF NOT EXISTS reports (
   model TEXT NOT NULL DEFAULT '',
   created_at TEXT NOT NULL
 );
+
+CREATE TABLE IF NOT EXISTS shift_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  shift_id INTEGER NOT NULL REFERENCES shifts(id) ON DELETE CASCADE,
+  phase TEXT NOT NULL CHECK (phase IN ('start', 'end', 'manual')),
+  text TEXT NOT NULL,
+  logged_at TEXT NOT NULL,
+  created_at TEXT NOT NULL
+);
 `;
 
 function ensureColumn(table, column, ddl) {
@@ -142,6 +154,9 @@ export function migrate() {
   ensureColumn('settings', 'color_palette', "color_palette TEXT NOT NULL DEFAULT 'emerald'");
   ensureColumn('shifts', 'site_id', 'site_id INTEGER REFERENCES sites(id) ON DELETE SET NULL');
   ensureColumn('shifts', 'site_name', "site_name TEXT NOT NULL DEFAULT ''");
+  ensureColumn('sites', 'checkpoints_json', "checkpoints_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn('sites', 'shift_start_requirements_json', "shift_start_requirements_json TEXT NOT NULL DEFAULT '[]'");
+  ensureColumn('sites', 'shift_end_requirements_json', "shift_end_requirements_json TEXT NOT NULL DEFAULT '[]'");
   if (needsPatrolsRebuild()) rebuildPatrols();
   db.exec(`
     CREATE INDEX IF NOT EXISTS idx_patrols_shift ON patrols(shift_id);

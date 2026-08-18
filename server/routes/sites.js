@@ -30,8 +30,19 @@ export function normalizePatrolNames(raw, count) {
   return names;
 }
 
+function strArray(value) {
+  if (!Array.isArray(value)) return [];
+  return value.map((x) => String(x || '').trim()).filter(Boolean);
+}
+
 function serialize(site) {
-  return { ...site, patrol_names: JSON.parse(site.patrol_names_json || '[]') };
+  return {
+    ...site,
+    patrol_names: JSON.parse(site.patrol_names_json || '[]'),
+    checkpoints: JSON.parse(site.checkpoints_json || '[]'),
+    shift_start_requirements: JSON.parse(site.shift_start_requirements_json || '[]'),
+    shift_end_requirements: JSON.parse(site.shift_end_requirements_json || '[]'),
+  };
 }
 
 router.get('/', (_req, res) => {
@@ -48,8 +59,20 @@ router.post('/', (req, res) => {
   const names = normalizePatrolNames(b.patrol_names, count);
 
   const info = db
-    .prepare('INSERT INTO sites (company_name, site_name, patrol_count, patrol_names_json, created_at) VALUES (?, ?, ?, ?, ?)')
-    .run((b.company_name || '').trim(), siteName, count, JSON.stringify(names), nowIso());
+    .prepare(
+      `INSERT INTO sites (company_name, site_name, patrol_count, patrol_names_json, checkpoints_json, shift_start_requirements_json, shift_end_requirements_json, created_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)`
+    )
+    .run(
+      (b.company_name || '').trim(),
+      siteName,
+      count,
+      JSON.stringify(names),
+      JSON.stringify(strArray(b.checkpoints)),
+      JSON.stringify(strArray(b.shift_start_requirements)),
+      JSON.stringify(strArray(b.shift_end_requirements)),
+      nowIso()
+    );
 
   res.status(201).json(serialize(db.prepare('SELECT * FROM sites WHERE id = ?').get(info.lastInsertRowid)));
 });
@@ -66,8 +89,18 @@ router.put('/:id', (req, res) => {
   const names = normalizePatrolNames(b.patrol_names, count);
 
   db.prepare(
-    'UPDATE sites SET company_name = ?, site_name = ?, patrol_count = ?, patrol_names_json = ? WHERE id = ?'
-  ).run((b.company_name || '').trim(), siteName, count, JSON.stringify(names), site.id);
+    `UPDATE sites SET company_name = ?, site_name = ?, patrol_count = ?, patrol_names_json = ?,
+      checkpoints_json = ?, shift_start_requirements_json = ?, shift_end_requirements_json = ? WHERE id = ?`
+  ).run(
+    (b.company_name || '').trim(),
+    siteName,
+    count,
+    JSON.stringify(names),
+    JSON.stringify(strArray(b.checkpoints)),
+    JSON.stringify(strArray(b.shift_start_requirements)),
+    JSON.stringify(strArray(b.shift_end_requirements)),
+    site.id
+  );
 
   res.json(serialize(db.prepare('SELECT * FROM sites WHERE id = ?').get(site.id)));
 });

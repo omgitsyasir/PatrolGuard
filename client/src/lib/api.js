@@ -37,6 +37,34 @@ export const api = {
     return data.urls;
   },
 
+  updateShift: (id, data) =>
+    request(`/api/shifts/${id}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  updatePatrol: (id, slot, data) =>
+    request(`/api/shifts/${id}/patrols/${slot}`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
+  saveChecklist: (id, slot, checklist) =>
+    request(`/api/shifts/${id}/patrols/${slot}/checklist`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ checklist }),
+    }),
+
+  previewReport: (kind, data) =>
+    request(`/api/reports/${kind}/preview`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(data),
+    }),
+
   sites: {
     list: () => request('/api/sites'),
     create: (data) =>

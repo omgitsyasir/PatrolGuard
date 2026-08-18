@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useState } from 'react';
-import { FileText, Loader2, Copy, Check, Trash2, ShieldAlert, RefreshCw, BrainCircuit } from 'lucide-react';
+import { FileText, Loader2, Copy, Check, Trash2, ShieldAlert, RefreshCw, BrainCircuit, Send, Eye } from 'lucide-react';
 import { api } from '../lib/api.js';
 import { useToast } from './Toast.jsx';
 import Modal from './Modal.jsx';
@@ -34,6 +34,53 @@ function ReportPreview({ report, onClose }) {
   );
 }
 
+// Review/edit the exact prompt before it is sent to the LLM.
+function PromptModal({ preview, busy, onSend, onClose }) {
+  const [system, setSystem] = useState(preview.system);
+  const [user, setUser] = useState(preview.user);
+  const [showContext, setShowContext] = useState(false);
+
+  return (
+    <Modal open onClose={onClose} title={preview.kind === 'dar' ? 'Review DAR prompt' : 'Review incident prompt'} wide>
+      <p className="mb-3 text-sm" style={{ color: 'rgb(var(--muted))' }}>
+        This is the exact prompt that will be sent to the AI model. Edit either field before sending.
+      </p>
+
+      <label className="label">System prompt</label>
+      <textarea value={system} onChange={(e) => setSystem(e.target.value)} rows={6} className="input font-mono text-xs" />
+
+      <label className="label mt-3">User prompt</label>
+      <textarea value={user} onChange={(e) => setUser(e.target.value)} rows={10} className="input font-mono text-xs" />
+
+      <button
+        type="button"
+        onClick={() => setShowContext((v) => !v)}
+        className="mt-3 flex items-center gap-1 text-xs font-semibold"
+        style={{ color: 'rgb(var(--a-700))' }}
+      >
+        <Eye size={14} /> {showContext ? 'Hide' : 'Show'} raw shift data being sent
+      </button>
+      {showContext && (
+        <pre
+          className="mt-2 max-h-48 overflow-y-auto whitespace-pre-wrap rounded-xl p-3 font-mono text-[11px] leading-relaxed"
+          style={{ backgroundColor: 'rgb(var(--header))', color: 'rgb(var(--header-text))' }}
+        >
+          {preview.context}
+        </pre>
+      )}
+
+      <div className="mt-4 flex gap-2">
+        <button onClick={onClose} className="btn-outline flex-1" disabled={busy}>
+          Cancel
+        </button>
+        <button onClick={() => onSend({ system, user })} disabled={busy} className="btn-primary flex-1">
+          {busy ? <Loader2 size={16} className="animate-spin" /> : <Send size={16} />} Send to AI
+        </button>
+      </div>
+    </Modal>
+  );
+}
+
 export default function Reports() {
   const toast = useToast();
   const [reports, setReports] = useState([]);
@@ -41,9 +88,11 @@ export default function Reports() {
   const [incidents, setIncidents] = useState([]);
   const [profiles, setProfiles] = useState([]);
   const [selectedProfileId, setSelectedProfileId] = useState('');
+  const selectedProfile = profiles.find((p) => String(p.id) === String(selectedProfileId));
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
   const [preview, setPreview] = useState(null);
+  const [prompt, setPrompt] = useState(null);
 
   const [darShift, setDarShift] = useState('');
   const [incidentId, setIncidentId] = useState('');
@@ -83,16 +132,13 @@ export default function Reports() {
     if (incidents.length && !incidentId) setIncidentId(String(incidents[0].id));
   }, [shifts, incidents, darShift, incidentId]);
 
-  const selectedProfile = profiles.find((p) => String(p.id) === String(selectedProfileId));
-
-  async function generateDar() {
+  async function prepareDar() {
     if (!darShift) return toast('Select a shift first', 'error');
+    if (!selectedProfileId) return toast('Select an AI profile first', 'error');
     setBusy('dar');
     try {
-      const report = await api.post('/api/reports/dar', { shift_id: Number(darShift), llm_profile_id: Number(selectedProfileId) });
-      setPreview(report);
-      setReports((r) => [report, ...r]);
-      toast('DAR generated', 'success');
+      const p = await api.previewReport('dar', { shift_id: Number(darShift) });
+      setPrompt({ ...p, kind: 'dar' });
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -100,14 +146,37 @@ export default function Reports() {
     }
   }
 
-  async function generateIncident() {
+  async function prepareIncident() {
     if (!incidentId) return toast('Select an incident first', 'error');
+    if (!selectedProfileId) return toast('Select an AI profile first', 'error');
     setBusy('incident');
     try {
-      const report = await api.post('/api/reports/incident', { incident_id: Number(incidentId), llm_profile_id: Number(selectedProfileId) });
+      const p = await api.previewReport('incident', { incident_id: Number(incidentId) });
+      setPrompt({ ...p, kind: 'incident' });
+    } catch (e) {
+      toast(e.message, 'error');
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function sendPrompt(overrides) {
+    const p = prompt;
+    setBusy(p.kind);
+    try {
+      const body = {
+        llm_profile_id: Number(selectedProfileId),
+        system: overrides.system,
+        user: overrides.user,
+      };
+      if (p.kind === 'dar') body.shift_id = p.shift_id;
+      else body.incident_id = p.incident_id;
+
+      const report = await api.post(`/api/reports/${p.kind}`, body);
+      setPrompt(null);
       setPreview(report);
       setReports((r) => [report, ...r]);
-      toast('Incident report generated', 'success');
+      toast(p.kind === 'dar' ? 'DAR generated' : 'Incident report generated', 'success');
     } catch (e) {
       toast(e.message, 'error');
     } finally {
@@ -174,8 +243,8 @@ export default function Reports() {
               </option>
             ))}
           </select>
-          <button onClick={generateDar} disabled={busy === 'dar' || shifts.length === 0 || !selectedProfileId} className="btn-primary mt-2 w-full">
-            {busy === 'dar' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} Generate DAR
+          <button onClick={prepareDar} disabled={busy === 'dar' || shifts.length === 0 || !selectedProfileId} className="btn-primary mt-2 w-full">
+            {busy === 'dar' ? <Loader2 size={16} className="animate-spin" /> : <FileText size={16} />} Review & Generate DAR
           </button>
         </div>
 
@@ -199,8 +268,8 @@ export default function Reports() {
               </option>
             ))}
           </select>
-          <button onClick={generateIncident} disabled={busy === 'incident' || incidents.length === 0 || !selectedProfileId} className="btn-primary mt-2 w-full">
-            {busy === 'incident' ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Generate Report
+          <button onClick={prepareIncident} disabled={busy === 'incident' || incidents.length === 0 || !selectedProfileId} className="btn-primary mt-2 w-full">
+            {busy === 'incident' ? <Loader2 size={16} className="animate-spin" /> : <ShieldAlert size={16} />} Review & Generate Report
           </button>
         </div>
       </div>
@@ -248,6 +317,7 @@ export default function Reports() {
         ))}
       </div>
 
+      {prompt && <PromptModal preview={prompt} busy={busy === 'dar' || busy === 'incident'} onSend={sendPrompt} onClose={() => setPrompt(null)} />}
       {preview && <ReportPreview report={preview} onClose={() => setPreview(null)} />}
     </div>
   );
