@@ -1,0 +1,129 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ---------- Theme variables ---------- */
+:root {
+  /* Default palette: Tactical Green / Emerald */
+  --a-50: 236 253 245;
+  --a-100: 209 250 229;
+  --a-200: 167 243 208;
+  --a-300: 110 231 183;
+  --a-400: 52 211 153;
+  --a-500: 16 185 129;
+  --a-600: 5 150 105;
+  --a-700: 4 120 87;
+  --a-800: 6 95 70;
+  --a-900: 6 78 59;
+
+  --bg: 248 250 252;      /* slate-50   */
+  --surface: 255 255 255; /* white      */
+  --surface-2: 241 245 249; /* slate-100 */
+  --line: 226 232 240;    /* slate-200  */
+  --line-strong: 203 213 225; /* slate-300 */
+  --ink: 15 23 42;        /* slate-900  */
+  --ink-2: 51 65 85;      /* slate-700  */
+  --muted: 100 116 139;   /* slate-500  */
+  --faint: 148 163 184;   /* slate-400  */
+  --header: 15 23 42;     /* slate-900  */
+  --header-text: 226 232 240;
+  --input-bg: 255 255 255;
+}
+
+[data-theme='dark'] {
+  --bg: 2 6 23;           /* slate-950  */
+  --surface: 15 23 42;    /* slate-900  */
+  --surface-2: 30 41 59;  /* slate-800  */
+  --line: 51 65 85;       /* slate-700  */
+  --line-strong: 71 85 105; /* slate-600 */
+  --ink: 226 232 240;     /* slate-200  */
+  --ink-2: 148 163 184;   /* slate-400  */
+  --muted: 148 163 184;
+  --faint: 100 116 139;   /* slate-500  */
+  --header: 2 6 23;       /* slate-950  */
+  --header-text: 226 232 240;
+  --input-bg: 15 23 42;
+}
+
+[data-palette='emerald'] {
+  --a-50: 236 253 245; --a-100: 209 250 229; --a-200: 167 243 208; --a-300: 110 231 183;
+  --a-400: 52 211 153; --a-500: 16 185 129; --a-600: 5 150 105; --a-700: 4 120 87;
+  --a-800: 6 95 70; --a-900: 6 78 59;
+}
+[data-palette='navy'] {
+  --a-50: 239 246 255; --a-100: 219 234 254; --a-200: 191 219 254; --a-300: 147 197 253;
+  --a-400: 96 165 250; --a-500: 59 130 246; --a-600: 37 99 235; --a-700: 29 78 216;
+  --a-800: 30 64 175; --a-900: 30 58 138;
+}
+[data-palette='amber'] {
+  --a-50: 255 251 235; --a-100: 254 243 199; --a-200: 253 230 138; --a-300: 252 211 77;
+  --a-400: 251 191 36; --a-500: 245 158 11; --a-600: 217 119 6; --a-700: 180 83 9;
+  --a-800: 146 64 14; --a-900: 120 53 15;
+}
+[data-palette='slate'] {
+  --a-50: 248 250 252; --a-100: 241 245 249; --a-200: 226 232 240; --a-300: 203 213 225;
+  --a-400: 148 163 184; --a-500: 100 116 139; --a-600: 71 85 105; --a-700: 51 65 85;
+  --a-800: 30 41 59; --a-900: 15 23 42;
+}
+
+@layer base {
+  html {
+    -webkit-tap-highlight-color: transparent;
+  }
+  body {
+    background-color: rgb(var(--bg));
+    color: rgb(var(--ink));
+  }
+  pre {
+    white-space: pre-wrap;
+  }
+}
+
+@layer components {
+  .btn {
+    @apply inline-flex items-center justify-center gap-2 rounded-xl px-4 py-2.5 text-sm font-semibold transition active:scale-[0.98] disabled:opacity-40 disabled:pointer-events-none;
+  }
+  .btn-primary {
+    @apply btn text-white shadow-sm;
+    background-color: rgb(var(--a-600));
+  }
+  .btn-primary:hover {
+    background-color: rgb(var(--a-700));
+  }
+  .btn-outline {
+    @apply btn border;
+    border-color: rgb(var(--line));
+    color: rgb(var(--ink-2));
+  }
+  .btn-outline:hover {
+    background-color: rgb(var(--surface-2));
+  }
+  .btn-danger {
+    @apply btn bg-rose-600 text-white hover:bg-rose-700;
+  }
+  .input {
+    @apply w-full rounded-xl border px-3 py-2.5 text-sm outline-none transition;
+    background-color: rgb(var(--input-bg));
+    border-color: rgb(var(--line));
+    color: rgb(var(--ink));
+  }
+  .input::placeholder {
+    color: rgb(var(--faint));
+  }
+  .input:focus {
+    border-color: rgb(var(--a-500));
+    box-shadow: 0 0 0 3px rgb(var(--a-500) / 0.25);
+  }
+  .label {
+    @apply mb-1 block text-xs font-semibold uppercase tracking-wide;
+    color: rgb(var(--muted));
+  }
+  .card {
+    @apply rounded-2xl border p-4 shadow-sm;
+    background-color: rgb(var(--surface));
+    border-color: rgb(var(--line));
+  }
+  .chip {
+    @apply inline-flex items-center gap-1 rounded-full border px-2 py-0.5 text-[11px] font-semibold;
+  }
+}
