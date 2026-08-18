@@ -38,9 +38,12 @@ app.use('/api/sites', sitesRouter);
 app.use('/api/llm-profiles', llmProfilesRouter);
 app.use('/api/reports', reportsRouter);
 
-// Serve built frontend in production
-const dist = path.join(__dirname, '..', 'client', 'dist');
-if (fs.existsSync(dist)) {
+// Serve built frontend in production.
+// Dev layout: <root>/server + <root>/client/dist. Docker layout: /app/server + /app/client/dist.
+const dist = ['../client/dist', 'client/dist']
+  .map((p) => path.join(__dirname, p))
+  .find((p) => fs.existsSync(p));
+if (dist) {
   app.use(express.static(dist));
   app.get(/^\/(?!api|uploads).*/, (_req, res) => {
     res.sendFile(path.join(dist, 'index.html'));
